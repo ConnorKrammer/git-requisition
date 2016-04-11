@@ -3,7 +3,7 @@
 # HEADER
 #==============================================================================
 #% SYNOPSIS
-#+    ${SCRIPT_NAME} start_commit [end_commit] [-hvf] [-n <name>] [-e <email>]
+#+    ${SCRIPT_NAME} -c|-u|start_commit [end_commit] [-hvf] [-n <name>] [-e <email>]
 #%
 #% DESCRIPTION
 #%    Overwrites git commit metadata so that a user can take
@@ -17,6 +17,8 @@
 #%                                  defaults to `git config user.name`
 #%    -e, --email                   Requisitioner's email
 #%                                  defaults to `git config user.email`
+#%    -u, --undo                    Undo the last requisition
+#%    -c, --clean                   Lock in the last requisition
 #%    -f, --force                   Pass --force to `git filter-branch`
 #%    -h, --help                    Print this help
 #%    -v, --version                 Print script information
@@ -24,6 +26,8 @@
 #% EXAMPLES
 #%    ${SCRIPT_NAME} HEAD~6 HEAD~3
 #%    ${SCRIPT_NAME} b1a9b6b^ d4c18b0 -n "John Doe" -e john@doe.com
+#%    ${SCRIPT_NAME} --clean
+#%    ${SCRIPT_NAME} --undo
 #%
 #==============================================================================
 #- IMPLEMENTATION
@@ -51,6 +55,11 @@ usage()      { printf "Usage: "; head -${SCRIPT_HEADSIZE:-99} ${0} | grep -e "^#
 usagefull()  { head -${SCRIPT_HEADSIZE:-99} ${0} | grep -e "^#[%+-]" | sed -e "s/^#[%+-]//g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g" ; }
 scriptinfo() { head -${SCRIPT_HEADSIZE:-99} ${0} | grep -e "^#-" | sed -e "s/^#-//g" -e "s/\${SCRIPT_NAME}/${SCRIPT_NAME}/g"; }
 
+# Information about the current branch
+branch=$(git symbolic-ref HEAD | sed -e 's,.*/\(.*\),\1,')
+clean_command="git update-ref -d refs/original/refs/heads/$branch"
+undo_command="git reset --hard refs/original/refs/heads/$branch"
+
 # Variable defaults
 start_commit=''
 end_commit=HEAD
@@ -58,11 +67,11 @@ name=$(git config user.name)
 email=$(git config user.email)
 help_arg=0
 info_arg=0
-
-#start_commit=2ac76e8
-#end_commit=ef62f23
+clean_arg=0
+undo_arg=0
 
 # Parse command line
+# Based on code by http://stackoverflow.com/a/24597113
 for ((i=1;i<=$#;i++)); do
 
     # -h | --help
@@ -76,6 +85,14 @@ for ((i=1;i<=$#;i++)); do
     # -f | --force
     elif [ ${!i} = "-f" ] || [ ${!i} = "--force" ]; then
         force=${!i}
+
+    # -c | --clean
+    elif [ ${!i} = "-c" ] || [ ${!i} = "--clean" ]; then
+        clean_arg=1
+
+    # -u | --undo
+    elif [ ${!i} = "-u" ] || [ ${!i} = "--undo" ]; then
+        undo_arg=1
 
     # -n | --name
     elif [ ${!i} = "-n" ] || [ ${!i} = "--name" ]; then
@@ -97,14 +114,28 @@ for ((i=1;i<=$#;i++)); do
     fi
 done
 
-# Print help if arguments are incorrect or either -h or -v are passed
+# Handle the --help and --version flags
 if [ $help_arg = 1 ]; then
     usagefull
     exit
 elif [ $info_arg = 1 ]; then
     scriptinfo
     exit
-elif [ -z $start_commit ] || [ -z $end_commit ]; then
+fi
+
+# Handle the clean and undo flags
+if [ $clean_arg = 1 ]; then
+    echo "Running \`$clean_command\`"
+    eval $clean_command
+    exit
+elif [ $undo_arg = 1 ]; then
+    echo "Running \`$undo_command\`"
+    eval $undo_command
+    exit
+fi
+
+# If start_commit hasn't been set then print usage information
+if [ -z $start_commit ]; then
     usage
     exit
 fi
@@ -127,13 +158,9 @@ git filter-branch --env-filter "$command" $force -- ^$start_commit HEAD
 
 # If we were successful, tell the user how to proceed
 if [[ $? == 0 ]]; then
-    # The currently checked-out branch
-    branch=$(git symbolic-ref HEAD | sed -e 's,.*/\(.*\),\1,')
-    update_ref="git update-ref -d refs/original/refs/heads/$branch"
-    reset_ref="git reset --hard refs/original/refs/heads/$branch"
 
     echo ""
-    echo "Check to make sure the changes were correct, then do one of the following:"
-    echo "  keep => \`$update_ref\`"
-    echo "  undo => \`$reset_ref\`"
+    echo "Check to make sure the changes were correct, then execute one of the following:"
+    echo "  \`$SCRIPT_NAME --clean\`   (calls \`$clean_command\`)"
+    echo "  \`$SCRIPT_NAME --undo\`    (calls \`$undo_command\`)"
 fi
